@@ -239,7 +239,7 @@ if 'current_data' in st.session_state:
             else:
                 shap_vals = shap_output
 
-            # Defensive check: If shap_vals is a string or array of strings (incompatible pickle), parse it
+            # CASE 1: Single string (e.g. '[-0.1, 0.5]')
             if isinstance(shap_vals, str):
                 try:
                     import ast
@@ -248,19 +248,28 @@ if 'current_data' in st.session_state:
                     st.error(f"Failed to parse SHAP values string: {e}")
                     st.stop()
             
-            # Force conversion to numeric (floats) if it's an array of objects
+            # CASE 2: List (convert to numpy array first)
+            if isinstance(shap_vals, list):
+                shap_vals = np.array(shap_vals)
+            
+            # CASE 3: Numpy Array of Strings (e.g. array(['[-0.1, 0.5]']))
             if isinstance(shap_vals, np.ndarray):
-                # Check if elements are strings representing lists (e.g. '[-0.1, 0.5]')
-                if shap_vals.size > 0 and isinstance(shap_vals.flat[0], str) and shap_vals.flat[0].strip().startswith('['):
-                     try:
-                        import ast
-                        # Assuming the first element is the list we want (common in this specific pickle error)
-                        shap_vals = np.array(ast.literal_eval(shap_vals.flat[0]))
-                     except Exception as e:
-                        st.error(f"Failed to parse inner list string: {e}")
-                        st.stop()
+                # Check if elements are strings representing lists
+                if shap_vals.size > 0 and isinstance(shap_vals.flat[0], str):
+                    # Try to parse the first element if it looks like a list
+                    if shap_vals.flat[0].strip().startswith('['):
+                         try:
+                            import ast
+                            # Assuming the first element is the list we want
+                            shap_vals = np.array(ast.literal_eval(shap_vals.flat[0]))
+                         except Exception as e:
+                            st.error(f"Failed to parse inner list string: {e}")
+                            st.stop()
+                    else:
+                        # Maybe it's just a string number "1.23"? Try direct float conversion
+                        pass
                 
-                # Try converting to float
+                # Final attempt: Convert to float
                 try:
                     shap_vals = shap_vals.astype(float)
                 except Exception as e:
