@@ -248,8 +248,19 @@ if 'current_data' in st.session_state:
                     st.error(f"Failed to parse SHAP values string: {e}")
                     st.stop()
             
-            # Force conversion to numeric (floats) if it's an array of strings/objects
+            # Force conversion to numeric (floats) if it's an array of objects
             if isinstance(shap_vals, np.ndarray):
+                # Check if elements are strings representing lists (e.g. '[-0.1, 0.5]')
+                if shap_vals.size > 0 and isinstance(shap_vals.flat[0], str) and shap_vals.flat[0].strip().startswith('['):
+                     try:
+                        import ast
+                        # Assuming the first element is the list we want (common in this specific pickle error)
+                        shap_vals = np.array(ast.literal_eval(shap_vals.flat[0]))
+                     except Exception as e:
+                        st.error(f"Failed to parse inner list string: {e}")
+                        st.stop()
+                
+                # Try converting to float
                 try:
                     shap_vals = shap_vals.astype(float)
                 except Exception as e:
