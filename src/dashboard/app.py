@@ -208,11 +208,24 @@ X_current = pd.DataFrame([current])[features_order]
 X_current = X_current.apply(pd.to_numeric)
 
 try:
-    explainer = shap.Explainer(model)
-    shap_values = explainer(X_current)
+    # Create TreeExplainer specifically for XGBoost
+    explainer = shap.TreeExplainer(model)
+    
+    shap_values = explainer.shap_values(X_current)
 
-    fig = plt.figure()
-    shap.plots.bar(shap_values, show=False)
+    # Handle multiclass properly
+    if isinstance(shap_values, list):
+        pred_class = int(model.predict(X_current)[0])
+        shap_values = shap_values[pred_class]
+
+    fig, ax = plt.subplots()
+    shap.summary_plot(
+        shap_values,
+        X_current,
+        plot_type="bar",
+        show=False
+    )
+
     st.pyplot(fig)
 
 except Exception as e:
