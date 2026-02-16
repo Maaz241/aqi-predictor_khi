@@ -59,3 +59,6 @@ This script will run the feature pipeline, training pipeline, and Streamlit dash
 - `scripts/`: Utility scripts (backfill).
 - `.github/workflows/`: CI/CD pipelines.
 - `notebooks/`: EDA and experimentation.
+
+## Streamlit Dashboard
+- `link`: `https://aqi-predictorkhi-vcup2qbdfsbm5tkzsbareu.streamlit.app/`

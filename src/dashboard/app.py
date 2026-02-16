@@ -225,6 +225,8 @@ if 'current_data' in st.session_state:
 
         X_current = pd.DataFrame([current_input_data])[features_order]
 
+        X_current = X_current.apply(pd.to_numeric, errors="coerce")
+
         try:
             explainer = shap.TreeExplainer(model)
             shap_output = explainer.shap_values(X_current)
