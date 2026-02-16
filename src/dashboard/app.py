@@ -239,6 +239,15 @@ if 'current_data' in st.session_state:
             else:
                 shap_vals = shap_output
 
+            # Defensive check: If shap_vals is a string (e.g. from incompatible model pickle), try to parse it
+            if isinstance(shap_vals, str):
+                try:
+                    import ast
+                    shap_vals = np.array(ast.literal_eval(shap_vals))
+                except Exception as e:
+                    st.error(f"Failed to parse SHAP values string: {e}")
+                    return
+
             if isinstance(shap_vals, np.ndarray) and len(shap_vals.shape) == 1:
                 shap_vals = shap_vals.reshape(1, -1)
 
