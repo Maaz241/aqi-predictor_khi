@@ -7,7 +7,7 @@ import sys
 import shap
 import matplotlib.pyplot as plt
 from datetime import datetime
-
+import ast
 # ======================================================
 # PATH SETUP
 # ======================================================
@@ -208,24 +208,34 @@ X_current = pd.DataFrame([current])[features_order]
 X_current = X_current.apply(pd.to_numeric)
 
 try:
-    # Create TreeExplainer specifically for XGBoost
-    explainer = shap.TreeExplainer(model)
+    # Make sure all features are numeric
+    X_current = X_current.apply(pd.to_numeric, errors="coerce")
     
-    shap_values = explainer.shap_values(X_current)
-
-    # Handle multiclass properly
-    if isinstance(shap_values, list):
+    # XGBoost-safe TreeExplainer
+    explainer = shap.TreeExplainer(model)
+    shap_vals = explainer.shap_values(X_current)
+    
+    # Handle multi-class (list of arrays)
+    if isinstance(shap_vals, list):
         pred_class = int(model.predict(X_current)[0])
-        shap_values = shap_values[pred_class]
+        shap_vals = shap_vals[pred_class]
 
+    # If shap_vals is stringified (old pickle), parse it
+    if isinstance(shap_vals, np.ndarray):
+        if shap_vals.dtype.kind in {'U', 'O'}:  # strings
+            try:
+                shap_vals = np.array([ast.literal_eval(s) if isinstance(s, str) else s for s in shap_vals.flatten()], dtype=float)
+            except Exception as e:
+                st.error(f"Failed parsing SHAP string: {e}")
+                st.stop()
+
+    # Make 2D if needed
+    if len(shap_vals.shape) == 1:
+        shap_vals = shap_vals.reshape(1, -1)
+
+    # Plot
     fig, ax = plt.subplots()
-    shap.summary_plot(
-        shap_values,
-        X_current,
-        plot_type="bar",
-        show=False
-    )
-
+    shap.summary_plot(shap_vals, X_current, plot_type="bar", show=False)
     st.pyplot(fig)
 
 except Exception as e:
