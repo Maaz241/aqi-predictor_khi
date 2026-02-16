@@ -27,18 +27,30 @@ dagshub_token = os.getenv("DAGSHUB_TOKEN")
 repo_owner = os.getenv("DAGSHUB_REPO_OWNER")
 repo_name = os.getenv("DAGSHUB_REPO_NAME")
 
-if dagshub_token and repo_owner and repo_name:
-    # If MLFLOW_TRACKING_URI is not set (local run), init DagsHub
-    if not os.getenv("MLFLOW_TRACKING_URI"):
-        print("Initializing DagsHub...")
-        dagshub.init(repo_owner=repo_owner, repo_name=repo_name, mlflow=True)
-    else:
-        print("MLFLOW_TRACKING_URI found, skipping dagshub.init...")
-        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+# Check for secrets
+if not dagshub_token:
+    print("WARNING: DAGSHUB_TOKEN not found in environment variables!")
+if not repo_owner:
+    print("WARNING: DAGSHUB_REPO_OWNER not found in environment variables!")
 
-    # Explicitly set credentials for MLflow (needed for both local and CI)
-    os.environ['MLFLOW_TRACKING_USERNAME'] = repo_owner
-    os.environ['MLFLOW_TRACKING_PASSWORD'] = dagshub_token
+# Authentication Logic
+if os.getenv("MLFLOW_TRACKING_URI"):
+    # CI/CD or Manual Remote Run
+    print(f"MLFLOW_TRACKING_URI found: {os.getenv('MLFLOW_TRACKING_URI')}")
+    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+    
+    # Set credentials for MLflow authentication
+    if dagshub_token and repo_owner:
+        os.environ['MLFLOW_TRACKING_USERNAME'] = repo_owner
+        os.environ['MLFLOW_TRACKING_PASSWORD'] = dagshub_token
+        print("MLflow credentials set from environment variables.")
+    else:
+        print("ERROR: DagsHub credentials missing for remote tracking!")
+else:
+    # Local Interactive Run
+    if dagshub_token and repo_owner and repo_name:
+        print("Initializing DagsHub (Local Run)...")
+        dagshub.init(repo_owner=repo_owner, repo_name=repo_name, mlflow=True)
 
 def train_models():
     print("Starting Training Pipeline...")
