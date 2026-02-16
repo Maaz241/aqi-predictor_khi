@@ -28,11 +28,15 @@ repo_owner = os.getenv("DAGSHUB_REPO_OWNER")
 repo_name = os.getenv("DAGSHUB_REPO_NAME")
 
 if dagshub_token and repo_owner and repo_name:
-    print("Initializing DagsHub...")
-    dagshub.init(repo_owner=repo_owner, repo_name=repo_name, mlflow=True)
-    mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
-    
-    # Explicitly set credentials for MLflow
+    # If MLFLOW_TRACKING_URI is not set (local run), init DagsHub
+    if not os.getenv("MLFLOW_TRACKING_URI"):
+        print("Initializing DagsHub...")
+        dagshub.init(repo_owner=repo_owner, repo_name=repo_name, mlflow=True)
+    else:
+        print("MLFLOW_TRACKING_URI found, skipping dagshub.init...")
+        mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI"))
+
+    # Explicitly set credentials for MLflow (needed for both local and CI)
     os.environ['MLFLOW_TRACKING_USERNAME'] = repo_owner
     os.environ['MLFLOW_TRACKING_PASSWORD'] = dagshub_token
 
