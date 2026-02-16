@@ -33,12 +33,19 @@ def run_pipeline():
     record = df_processed.to_dict('records')[0]
     
     # Upsert based on timestamp to avoid duplicates if run multiple times
-    db_client.collection.update_one(
+    result = db_client.collection.update_one(
         {"timestamp": record["timestamp"]},
         {"$set": record},
         upsert=True
     )
-    print("Successfully stored processed features in MongoDB.")
+    
+    if result.upserted_id:
+        print(f"Successfully stored NEW processed feature in MongoDB. ID: {result.upserted_id}")
+    elif result.modified_count > 0:
+        print("Updated existing record in MongoDB.")
+    else:
+        print("Record already exists and is up-to-date. No changes made.")
+        
     db_client.close()
 
 if __name__ == "__main__":
