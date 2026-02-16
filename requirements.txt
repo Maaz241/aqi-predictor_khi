@@ -1,0 +1,15 @@
+pandas
+openpyxl
+pymongo
+requests
+python-dotenv
+mlflow
+dagshub
+streamlit
+shap
+matplotlib
+scikit-learn
+xgboost
+fastapi
+uvicorn
+python-multipart
