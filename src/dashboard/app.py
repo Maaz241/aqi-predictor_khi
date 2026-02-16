@@ -239,41 +239,56 @@ if 'current_data' in st.session_state:
             else:
                 shap_vals = shap_output
 
-            # CASE 1: Single string (e.g. '[-0.1, 0.5]')
+            # Robust SHAP value parsing to handle pickle incompatibility
+            import ast
+            import re
+            
+            # CASE 1: Single string (e.g. '[-0.1, 0.5]' or '[-1.9E-1,2.3E0]')
             if isinstance(shap_vals, str):
                 try:
-                    import ast
+                    # Try ast.literal_eval first
                     shap_vals = np.array(ast.literal_eval(shap_vals))
-                except Exception as e:
-                    st.error(f"Failed to parse SHAP values string: {e}")
-                    st.stop()
+                except:
+                    # If that fails, manually parse scientific notation
+                    try:
+                        # Remove brackets and split by comma
+                        cleaned = shap_vals.strip('[]')
+                        # Split and convert each element
+                        values = [float(x.strip()) for x in cleaned.split(',')]
+                        shap_vals = np.array(values)
+                    except Exception as e:
+                        st.error(f"Failed to parse SHAP string: {e}")
+                        st.stop()
             
             # CASE 2: List (convert to numpy array first)
-            if isinstance(shap_vals, list):
+            elif isinstance(shap_vals, list):
                 shap_vals = np.array(shap_vals)
             
-            # CASE 3: Numpy Array of Strings (e.g. array(['[-0.1, 0.5]']))
-            if isinstance(shap_vals, np.ndarray):
-                # Check if elements are strings representing lists
-                if shap_vals.size > 0 and isinstance(shap_vals.flat[0], str):
-                    # Try to parse the first element if it looks like a list
-                    if shap_vals.flat[0].strip().startswith('['):
-                         try:
-                            import ast
-                            # Assuming the first element is the list we want
-                            shap_vals = np.array(ast.literal_eval(shap_vals.flat[0]))
-                         except Exception as e:
-                            st.error(f"Failed to parse inner list string: {e}")
-                            st.stop()
-                    else:
-                        # Maybe it's just a string number "1.23"? Try direct float conversion
-                        pass
+            # CASE 3: Numpy Array - check if elements are strings
+            if isinstance(shap_vals, np.ndarray) and shap_vals.size > 0:
+                first_elem = shap_vals.flat[0]
                 
-                # Final attempt: Convert to float
+                # If first element is a string, parse it
+                if isinstance(first_elem, str):
+                    if first_elem.strip().startswith('['):
+                        # It's a stringified list
+                        try:
+                            shap_vals = np.array(ast.literal_eval(first_elem))
+                        except:
+                            # Manual parsing fallback
+                            try:
+                                cleaned = first_elem.strip('[]')
+                                values = [float(x.strip()) for x in cleaned.split(',')]
+                                shap_vals = np.array(values)
+                            except Exception as e:
+                                st.error(f"Failed to parse nested list string: {e}")
+                                st.stop()
+                
+                # Final conversion to float
                 try:
                     shap_vals = shap_vals.astype(float)
                 except Exception as e:
-                    st.error(f"Failed to convert SHAP values to float: {e}")
+                    st.error(f"Failed to convert to float: {e}. Type: {type(shap_vals)}, Content: {shap_vals}")
                     st.stop()
 
             if isinstance(shap_vals, np.ndarray) and len(shap_vals.shape) == 1:
