@@ -239,13 +239,21 @@ if 'current_data' in st.session_state:
             else:
                 shap_vals = shap_output
 
-            # Defensive check: If shap_vals is a string (e.g. from incompatible model pickle), try to parse it
+            # Defensive check: If shap_vals is a string or array of strings (incompatible pickle), parse it
             if isinstance(shap_vals, str):
                 try:
                     import ast
                     shap_vals = np.array(ast.literal_eval(shap_vals))
                 except Exception as e:
                     st.error(f"Failed to parse SHAP values string: {e}")
+                    st.stop()
+            
+            # Force conversion to numeric (floats) if it's an array of strings/objects
+            if isinstance(shap_vals, np.ndarray):
+                try:
+                    shap_vals = shap_vals.astype(float)
+                except Exception as e:
+                    st.error(f"Failed to convert SHAP values to float: {e}")
                     st.stop()
 
             if isinstance(shap_vals, np.ndarray) and len(shap_vals.shape) == 1:
