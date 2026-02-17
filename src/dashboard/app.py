@@ -247,7 +247,6 @@ if 'current_data' in st.session_state:
                - Uses Day 2 predictions as lag features for Day 3
             4. **AQI Classification**: Predicts AQI category using predicted pollutants + weather
             
-            This approach is more realistic than assuming constant pollutant levels!
             """)
     
     elif model and encoder:
