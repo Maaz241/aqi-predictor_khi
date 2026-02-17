@@ -23,7 +23,19 @@ class FeatureProcessor:
         """Computes time-based and derived features."""
         # Convert timestamp if it's not already
         if not pd.api.types.is_datetime64_any_dtype(df['timestamp']):
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s' if df['timestamp'].iloc[0] > 1e10 else None)
+            # Current Unix timestamp in seconds is ~1.7e9, in ms is ~1.7e12
+            try:
+                # Convert to numeric first to handle numpy types/strings
+                vals = pd.to_numeric(df['timestamp'], errors='coerce')
+                if not vals.isna().any():
+                    val = vals.iloc[0]
+                    unit = 'ms' if val > 1e11 else 's'
+                    df['timestamp'] = pd.to_datetime(vals, unit=unit)
+                else:
+                    # Fallback for non-numeric types (e.g. ISO strings)
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+            except Exception:
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
         
         # Time-based features
         df['hour'] = df['timestamp'].dt.hour
