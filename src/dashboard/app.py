@@ -76,11 +76,17 @@ if metrics:
 
 def get_aqi_color(category):
     colors = {
+        # OpenWeather classes
         "Good": "#00e400",
         "Fair": "#ffff00",
         "Moderate": "#ff7e00",
         "Poor": "#ff0000",
-        "Very Poor": "#8f3f97"
+        "Very Poor": "#8f3f97",
+        # EPA classes (used by ML model)
+        "Unhealthy for Sensitive Groups": "#ff7e00",
+        "Unhealthy": "#ff0000",
+        "Very Unhealthy": "#8f3f97",
+        "Hazardous": "#7e0023"
     }
     return colors.get(category, "#ffffff")
 
@@ -127,14 +133,37 @@ if 'current_data' in st.session_state:
     # CURRENT AQI
     # ---------------------------
     with col1:
-        category = get_openweather_aqi_label(data['aqi'])
         st.metric("Current AQI Index (OpenWeather)", f"{data['aqi']} / 5")
+        
+        # Use ML model to predict current AQI category for consistency with forecast
+        if model and encoder:
+            # Prepare current data for prediction
+            current_input = {**data}
+            current_dt = datetime.fromtimestamp(data['timestamp'])
+            current_input['hour'] = current_dt.hour
+            current_input['day_of_week'] = current_dt.weekday()
+            current_input['month'] = current_dt.month
+            
+            features_order = [
+                'pm25', 'pm10', 'no2', 'o3', 'so2', 'co',
+                'temperature', 'humidity', 'pressure',
+                'wind_speed', 'wind_deg', 'clouds',
+                'hour', 'day_of_week', 'month'
+            ]
+            
+            X_current = pd.DataFrame([current_input])[features_order]
+            pred_encoded = model.predict(X_current)[0]
+            category = encoder.inverse_transform([pred_encoded])[0]
+        else:
+            # Fallback to OpenWeather label if model not available
+            category = get_openweather_aqi_label(data['aqi'])
+        
         st.markdown(
             f"### Status: <span style='color:{get_aqi_color(category)}'>{category}</span>",
             unsafe_allow_html=True
         )
         
-        if category in ["Poor", "Very Poor"]:
+        if category in ["Poor", "Very Poor", "Unhealthy", "Very Unhealthy", "Hazardous", "Unhealthy for Sensitive Groups"]:
             st.warning("🚨 ALERT: Air quality is unhealthy. Limit outdoor exposure.")
 
     # ---------------------------
