@@ -89,12 +89,15 @@ def train_models():
     }
     
     best_f1 = 0
+    best_model = None
     best_model_name = ""
+    best_acc = 0
     all_metrics = []
     
-    for name, model in models.items():
-        with mlflow.start_run(run_name=name):
-            print(f"Training {name}...")
+    # Start a parent run for the main training session
+    with mlflow.start_run(run_name="Main_AQI_Training_Session"):
+        for name, model in models.items():
+            print(f"Training {name} locally...")
             model.fit(X_train, y_train)
             
             # Predictions
@@ -106,22 +109,7 @@ def train_models():
             
             print(f"{name} - Accuracy: {acc:.4f}, F1-Score: {f1:.4f}")
             
-            # Log params and metrics
-            mlflow.log_param("model_type", name)
-            mlflow.log_metric("accuracy", acc)
-            mlflow.log_metric("f1_score", f1)
-            
-            # Log model
-            # Log model and register it
-            # Note: For Ridge, we use sklearn.log_model as it's a scikit-learn estimator
-            if name == "RandomForest":
-                mlflow.sklearn.log_model(model, "model", registered_model_name="RandomForest_AQI")
-            elif name == "XGBoost":
-                mlflow.xgboost.log_model(model, "model", registered_model_name="XGBoost_AQI")
-            else:
-                mlflow.sklearn.log_model(model, "model", registered_model_name="Ridge_AQI")
-            
-            # Accumulate metrics
+            # Accumulate metrics for local storage
             all_metrics.append({
                 "model": name,
                 "accuracy": acc,
@@ -130,15 +118,41 @@ def train_models():
 
             if f1 > best_f1:
                 best_f1 = f1
+                best_acc = acc
+                best_model = model
                 best_model_name = name
-                # Save locally for dashbord
-                import pickle
-                with open("best_model.pkl", "wb") as f:
-                    pickle.dump(model, f)
-                with open("label_encoder.pkl", "wb") as f:
-                    pickle.dump(label_encoder, f)
+        
+        # 3. Log ONLY the best model to MLflow (Nested under parent run)
+        if best_model:
+            with mlflow.start_run(run_name=f"Best_Model_{best_model_name}", nested=True):
+                print(f"Logging best model ({best_model_name}) to MLflow...")
+                mlflow.log_param("model_type", best_model_name)
+                mlflow.log_metric("accuracy", best_acc)
+                mlflow.log_metric("f1_score", best_f1)
+                
+                # Log model parameters
+                if hasattr(best_model, 'get_params'):
+                    mlflow.log_params(best_model.get_params())
+                
+                # Register and log the model
+                if best_model_name == "RandomForest":
+                    mlflow.sklearn.log_model(best_model, "model", registered_model_name="RandomForest_AQI")
+                elif best_model_name == "XGBoost":
+                    mlflow.xgboost.log_model(best_model, "model", registered_model_name="XGBoost_AQI")
+                else:
+                    mlflow.sklearn.log_model(best_model, "model", registered_model_name="Ridge_AQI")
+                
+                run_id = mlflow.active_run().info.run_id
+                print(f"Logged best model to MLflow. Run ID: {run_id}")
+
+            # Save locally for dashboard
+            import pickle
+            with open("best_model.pkl", "wb") as f:
+                pickle.dump(best_model, f)
+            with open("label_encoder.pkl", "wb") as f:
+                pickle.dump(label_encoder, f)
     
-    # Save all metrics
+    # Save all metrics locally
     with open("metrics.json", "w") as f:
         json.dump(all_metrics, f)
 

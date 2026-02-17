@@ -103,44 +103,49 @@ def train_pollutant_models(df, pollutants):
     
     mlflow.set_experiment("pollutant_prediction")
     
-    for pollutant in pollutants:
-        print(f"\n{'='*60}")
-        print(f"Training models for {pollutant.upper()}")
-        print(f"{'='*60}")
+    # Start a parent run for this training session
+    with mlflow.start_run(run_name=f"Pollutant_Training_Session"):
         
-        # Build feature list for this pollutant
-        lag_features = [f'{pollutant}_lag{i}' for i in range(1, 4)]
-        rolling_features = [f'{pollutant}_rolling_mean', f'{pollutant}_rolling_std']
-        
-        # Include lag features from OTHER pollutants as well (cross-pollutant effects)
-        other_pollutants = [p for p in pollutants if p != pollutant]
-        other_lag_features = []
-        for other_p in other_pollutants:
-            other_lag_features.append(f'{other_p}_lag1')  # Only lag1 from others
-        
-        feature_cols = lag_features + rolling_features + other_lag_features + weather_features + temporal_features
-        
-        X = df[feature_cols]
-        y = df[pollutant]
-        
-        # Train/test split (80/20)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=False)
-        
-        print(f"Training set: {len(X_train)}, Test set: {len(X_test)}")
-        
-        # Try multiple models
-        model_configs = {
-            'XGBoost': XGBRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, random_state=42),
-            'RandomForest': RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
-            'Ridge': Ridge(alpha=1.0)
-        }
-        
-        best_model = None
-        best_rmse = float('inf')
-        best_model_name = None
-        
-        for model_name, model in model_configs.items():
-            with mlflow.start_run(run_name=f"{pollutant}_{model_name}"):
+        for pollutant in pollutants:
+            print(f"\n{'='*60}")
+            print(f"Training models for {pollutant.upper()}")
+            print(f"{'='*60}")
+            
+            # Build feature list for this pollutant
+            lag_features = [f'{pollutant}_lag{i}' for i in range(1, 4)]
+            rolling_features = [f'{pollutant}_rolling_mean', f'{pollutant}_rolling_std']
+            
+            # Include lag features from OTHER pollutants as well (cross-pollutant effects)
+            other_pollutants = [p for p in pollutants if p != pollutant]
+            other_lag_features = []
+            for other_p in other_pollutants:
+                other_lag_features.append(f'{other_p}_lag1')  # Only lag1 from others
+            
+            feature_cols = lag_features + rolling_features + other_lag_features + weather_features + temporal_features
+            
+            X = df[feature_cols]
+            y = df[pollutant]
+            
+            # Train/test split (80/20)
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, shuffle=False)
+            
+            print(f"Training set: {len(X_train)}, Test set: {len(X_test)}")
+            
+            # Try multiple models - evaluate locally first
+            model_configs = {
+                'XGBoost': XGBRegressor(n_estimators=100, max_depth=5, learning_rate=0.1, random_state=42),
+                'RandomForest': RandomForestRegressor(n_estimators=100, max_depth=10, random_state=42),
+                'Ridge': Ridge(alpha=1.0)
+            }
+            
+            best_model = None
+            best_rmse = float('inf')
+            best_mae = float('inf')
+            best_r2 = float('-inf')
+            best_model_name = None
+            
+            # 1. Evaluate all models locally
+            for model_name, model in model_configs.items():
                 # Train
                 model.fit(X_train, y_train)
                 
@@ -157,35 +162,46 @@ def train_pollutant_models(df, pollutants):
                 print(f"  MAE:  {mae:.4f}")
                 print(f"  R²:   {r2:.4f}")
                 
-                # Log to MLflow
-                mlflow.log_param("pollutant", pollutant)
-                mlflow.log_param("model_type", model_name)
-                mlflow.log_param("n_features", len(feature_cols))
-                mlflow.log_metric("rmse", rmse)
-                mlflow.log_metric("mae", mae)
-                mlflow.log_metric("r2", r2)
-                
                 # Track best model
                 if rmse < best_rmse:
                     best_rmse = rmse
+                    best_mae = mae
+                    best_r2 = r2
                     best_model = model
                     best_model_name = model_name
-        
-        # Store best model
-        models[pollutant] = {
-            'model': best_model,
-            'features': feature_cols,
-            'model_name': best_model_name,
-            'rmse': best_rmse
-        }
-        
-        metrics_summary.append({
-            'pollutant': pollutant,
-            'best_model': best_model_name,
-            'rmse': best_rmse
-        })
-        
-        print(f"\n✓ Best model for {pollutant.upper()}: {best_model_name} (RMSE: {best_rmse:.4f})")
+            
+            # 2. Log ONLY the best model to MLflow (Nested under parent run)
+            with mlflow.start_run(run_name=f"{pollutant}_{best_model_name}", nested=True):
+                mlflow.log_param("pollutant", pollutant)
+                mlflow.log_param("model_type", best_model_name)
+                mlflow.log_param("n_features", len(feature_cols))
+                mlflow.log_metric("rmse", best_rmse)
+                mlflow.log_metric("mae", best_mae)
+                mlflow.log_metric("r2", best_r2)
+                
+                # Log model parameters if available
+                if hasattr(best_model, 'get_params'):
+                    mlflow.log_params(best_model.get_params())
+                
+                # Retrieve the run ID to print it
+                run_id = mlflow.active_run().info.run_id
+                print(f"Logged best model ({best_model_name}) to MLflow. Run ID: {run_id}")
+            
+            # Store best model for saving
+            models[pollutant] = {
+                'model': best_model,
+                'features': feature_cols,
+                'model_name': best_model_name,
+                'rmse': best_rmse
+            }
+            
+            metrics_summary.append({
+                'pollutant': pollutant,
+                'best_model': best_model_name,
+                'rmse': best_rmse
+            })
+            
+            print(f"\n✓ Best model for {pollutant.upper()}: {best_model_name} (RMSE: {best_rmse:.4f})")
     
     return models, metrics_summary
 
