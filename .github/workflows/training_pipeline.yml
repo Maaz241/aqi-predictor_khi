@@ -32,10 +32,19 @@ jobs:
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
         run: python src/models/train.py
 
+      - name: Run Pollutant Model Training
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          DATABASE_NAME: ${{ secrets.DATABASE_NAME }}
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          DAGSHUB_REPO_OWNER: ${{ secrets.DAGSHUB_REPO_OWNER }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: python src/models/train_pollutant_models.py
+
       - name: Commit and Push Model Artifacts
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          git add best_model.pkl label_encoder.pkl metrics.json
+          git add best_model.pkl label_encoder.pkl metrics.json pollutant_models.pkl
           git commit -m "Update model artifacts from CI/CD pipeline [skip ci]" || echo "No changes to commit"
           git push

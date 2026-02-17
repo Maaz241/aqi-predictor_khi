@@ -18,23 +18,28 @@ from src.feature_engineering.feature_processor import FeatureProcessor
 st.set_page_config(page_title="Karachi AQI Predictor", layout="wide")
 
 # ===========================
-# LOAD MODEL + ENCODER
+# LOAD MODEL + ENCODER + POLLUTANT MODELS
 # ===========================
 
 @st.cache_resource
 def load_model_assets():
     model_path = "best_model.pkl"
     encoder_path = "label_encoder.pkl"
+    pollutant_models_path = "pollutant_models.pkl"
     
-    model, encoder = None, None
+    model, encoder, pollutant_models = None, None, None
     
     if os.path.exists(model_path) and os.path.exists(encoder_path):
         with open(model_path, "rb") as f:
             model = pickle.load(f)
         with open(encoder_path, "rb") as f:
             encoder = pickle.load(f)
+    
+    if os.path.exists(pollutant_models_path):
+        with open(pollutant_models_path, "rb") as f:
+            pollutant_models = pickle.load(f)
             
-    return model, encoder
+    return model, encoder, pollutant_models
 
 
 def load_metrics():
@@ -46,7 +51,7 @@ def load_metrics():
     return None
 
 
-model, encoder = load_model_assets()
+model, encoder, pollutant_models = load_model_assets()
 metrics = load_metrics()
 
 # ===========================
@@ -200,7 +205,55 @@ if 'current_data' in st.session_state:
     st.divider()
     st.header("🔮 3-Day Prediction Forecast")
 
-    if model and encoder:
+    if model and encoder and pollutant_models:
+        from src.forecasting.autoregressive_forecaster import AutoregressiveForecaster
+        
+        # Get weather forecast
+        ow_client = OpenWeatherClient()
+        forecast_features = ow_client.get_forecast_features()
+        
+        # Create forecaster
+        forecaster = AutoregressiveForecaster(model, pollutant_models, encoder)
+        
+        # Get autoregressive predictions
+        predictions = forecaster.predict_3day_forecast(forecast_features)
+        
+        # Display predictions in table
+        forecast_df = pd.DataFrame([
+            {
+                "Time": pred['timestamp'],
+                "Temp": f"{pred['temperature']:.1f}°C",
+                "PM2.5": f"{pred['pm25']:.1f}",
+                "PM10": f"{pred['pm10']:.1f}",
+                "NO2": f"{pred['no2']:.2f}",
+                "O3": f"{pred['o3']:.1f}",
+                "AQI Status": pred['aqi_category']
+            }
+            for pred in predictions
+        ])
+        
+        st.dataframe(forecast_df, use_container_width=True, height=400)
+        
+        # Show note about methodology
+        with st.expander("ℹ️ How are these predictions made?"):
+            st.write("""
+            **Autoregressive Forecasting Methodology:**
+            
+            1. **Historical Trends**: Uses the last 3 time steps of pollutant data as lag features
+            2. **Weather Forecast**: Incorporates temperature, humidity, wind, etc. from OpenWeather API
+            3. **Iterative Prediction**: 
+               - Predicts pollutants for Day 1 using historical data + weather
+               - Uses Day 1 predictions as lag features for Day 2
+               - Uses Day 2 predictions as lag features for Day 3
+            4. **AQI Classification**: Predicts AQI category using predicted pollutants + weather
+            
+            This approach is more realistic than assuming constant pollutant levels!
+            """)
+    
+    elif model and encoder:
+        st.warning("⚠️ Pollutant prediction models not found. Showing simplified forecast (assumes constant pollutant levels).")
+        
+        # Fallback to old method
         ow_client = OpenWeatherClient()
         forecast_features = ow_client.get_forecast_features()
 
@@ -238,3 +291,9 @@ if 'current_data' in st.session_state:
             })
 
         st.table(pd.DataFrame(predictions))
+    
+    else:
+        st.info("Model not found. Please run the training pipeline first.")
+
+else:
+    st.info("Click 'Fetch Real-time Data' to start.")
