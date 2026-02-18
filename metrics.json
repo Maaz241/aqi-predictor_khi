@@ -1,1 +1,1 @@
-[{"model": "RandomForest", "accuracy": 0.647887323943662, "f1_score": 0.6475603168560915}, {"model": "XGBoost", "accuracy": 0.9577464788732394, "f1_score": 0.9529175050301811}, {"model": "Ridge", "accuracy": 0.11267605633802817, "f1_score": 0.061970371829526756}]
+[{"model": "RandomForest", "accuracy": 0.676056338028169, "f1_score": 0.6930502232950962}, {"model": "XGBoost", "accuracy": 0.9295774647887324, "f1_score": 0.9161636485580148}, {"model": "Ridge", "accuracy": 0.09859154929577464, "f1_score": 0.055481607594283645}]
