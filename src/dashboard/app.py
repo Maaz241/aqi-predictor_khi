@@ -66,10 +66,16 @@ if metrics:
         metrics = [metrics]
     
     metrics_df = pd.DataFrame(metrics)
-    st.sidebar.dataframe(metrics_df.set_index('model'), use_container_width=True)
-    
-    best_model = metrics_df.loc[metrics_df['f1_score'].idxmax()]
-    st.sidebar.success(f"Best Model: {best_model['model']}")
+    display_cols = ['model', 'accuracy', 'f1_score']
+    display_cols = [col for col in display_cols if col in metrics_df.columns]
+    st.sidebar.dataframe(metrics_df[display_cols].set_index('model'), use_container_width=True)
+
+    best_primary_model = metrics_df.loc[metrics_df['f1_score'].idxmax()]
+    horizon = int(best_primary_model.get('forecast_horizon_steps', 1))
+    st.sidebar.success(
+        f"Best Forecast Model (+{horizon} step): {best_primary_model['model']} "
+        f"(F1: {best_primary_model['f1_score']:.3f})"
+    )
     
     st.sidebar.divider()
 
@@ -79,19 +85,30 @@ if metrics:
 # COLOR MAPPING (5 CLASSES)
 # ===========================
 
+def normalize_aqi_category(category):
+    mapping = {
+        "Good": "Good",
+        "Fair": "Fair",
+        "Moderate": "Moderate",
+        "Poor": "Poor",
+        "Very Poor": "Very Poor",
+        # Backward compatibility for older model artifacts
+        "Unhealthy for Sensitive Groups": "Moderate",
+        "Unhealthy": "Poor",
+        "Very Unhealthy": "Very Poor",
+        "Hazardous": "Very Poor",
+    }
+    return mapping.get(category, category)
+
+
 def get_aqi_color(category):
+    category = normalize_aqi_category(category)
     colors = {
-        # OpenWeather classes
         "Good": "#00e400",
         "Fair": "#ffff00",
         "Moderate": "#ff7e00",
         "Poor": "#ff0000",
         "Very Poor": "#8f3f97",
-        # EPA classes (used by ML model)
-        "Unhealthy for Sensitive Groups": "#ff7e00",
-        "Unhealthy": "#ff0000",
-        "Very Unhealthy": "#8f3f97",
-        "Hazardous": "#7e0023"
     }
     return colors.get(category, "#ffffff")
 
@@ -105,6 +122,66 @@ def get_openweather_aqi_label(aqi_index):
         5: "Very Poor"
     }
     return mapping.get(aqi_index, "Unknown")
+
+
+def _extract_shap_vector(raw_values, class_index, feature_count):
+    """Normalize SHAP output shape across model and explainer types."""
+    if isinstance(raw_values, list):
+        if not raw_values:
+            return None
+        class_idx = min(class_index, len(raw_values) - 1)
+        arr = np.array(raw_values[class_idx])
+        if arr.ndim == 2:
+            return arr[0]
+        if arr.ndim == 1:
+            return arr
+        return None
+
+    arr = np.array(raw_values)
+    if arr.ndim == 1:
+        return arr
+    if arr.ndim == 2:
+        return arr[0]
+    if arr.ndim == 3:
+        # Typical shape: (n_samples, n_features, n_classes)
+        if arr.shape[0] == 1 and arr.shape[1] == feature_count:
+            class_idx = min(class_index, arr.shape[2] - 1)
+            return arr[0, :, class_idx]
+        # Alternate shape: (n_samples, n_classes, n_features)
+        if arr.shape[0] == 1 and arr.shape[2] == feature_count:
+            class_idx = min(class_index, arr.shape[1] - 1)
+            return arr[0, class_idx, :]
+        # Alternate shape: (n_classes, n_samples, n_features)
+        if arr.shape[2] == feature_count:
+            class_idx = min(class_index, arr.shape[0] - 1)
+            return arr[class_idx, 0, :]
+    return None
+
+
+def compute_shap_contributions(model_obj, X_input, class_index, feature_names):
+    """Compute per-feature SHAP contributions for one prediction row."""
+    try:
+        explainer = shap.Explainer(model_obj)
+        explanation = explainer(X_input)
+        raw_values = explanation.values
+    except Exception:
+        try:
+            explainer = shap.TreeExplainer(model_obj)
+            raw_values = explainer.shap_values(X_input)
+        except Exception:
+            return None
+
+    shap_vector = _extract_shap_vector(raw_values, class_index, len(feature_names))
+    if shap_vector is None or len(shap_vector) != len(feature_names):
+        return None
+
+    contributions = pd.DataFrame({
+        "feature": feature_names,
+        "shap_value": shap_vector
+    })
+    contributions["abs_shap"] = contributions["shap_value"].abs()
+    contributions = contributions.sort_values("abs_shap", ascending=False).reset_index(drop=True)
+    return contributions
 
 
 # ===========================
@@ -131,6 +208,9 @@ if st.sidebar.button("Fetch Real-time Data"):
 
 if 'current_data' in st.session_state:
     data = st.session_state['current_data']
+    current_model_input = None
+    current_pred_encoded = None
+    model_category = None
     
     col1, col2, col3 = st.columns(3)
     
@@ -138,11 +218,15 @@ if 'current_data' in st.session_state:
     # CURRENT AQI
     # ---------------------------
     with col1:
-        st.metric("Current AQI Index (OpenWeather)", f"{data['aqi']} / 5")
-        
-        # Use ML model to predict current AQI category for consistency with forecast
+        openweather_index = int(round(float(data['aqi'])))
+        openweather_category = normalize_aqi_category(get_openweather_aqi_label(openweather_index))
+        st.metric("Current AQI Index (OpenWeather)", f"{openweather_index} / 5")
+
+        # Keep current status tied to OpenWeather index so number and label always match.
+        category = openweather_category
+
+        # Show model nowcast separately for comparison.
         if model and encoder:
-            # Prepare current data for prediction
             current_input = {**data}
             current_dt = datetime.fromtimestamp(data['timestamp'])
             current_input['hour'] = current_dt.hour
@@ -158,17 +242,17 @@ if 'current_data' in st.session_state:
             
             X_current = pd.DataFrame([current_input])[features_order]
             pred_encoded = model.predict(X_current)[0]
-            category = encoder.inverse_transform([pred_encoded])[0]
-        else:
-            # Fallback to OpenWeather label if model not available
-            category = get_openweather_aqi_label(data['aqi'])
+            model_category = normalize_aqi_category(encoder.inverse_transform([pred_encoded])[0])
+            current_model_input = X_current
+            current_pred_encoded = int(pred_encoded)
+            st.caption(f"Model nowcast: {model_category}")
         
         st.markdown(
             f"### Status: <span style='color:{get_aqi_color(category)}'>{category}</span>",
             unsafe_allow_html=True
         )
         
-        if category in ["Poor", "Very Poor", "Unhealthy", "Very Unhealthy", "Hazardous", "Unhealthy for Sensitive Groups"]:
+        if category in ["Poor", "Very Poor"]:
             st.warning("🚨 ALERT: Air quality is unhealthy. Limit outdoor exposure.")
 
     # ---------------------------
@@ -199,6 +283,41 @@ if 'current_data' in st.session_state:
         st.write(f"🌬️ Wind: {data['wind_speed']} m/s ({data['wind_deg']}°)")
 
     # ===========================
+    # SHAP ANALYSIS (CURRENT NOWCAST)
+    # ===========================
+    if model and encoder and current_model_input is not None and current_pred_encoded is not None:
+        st.divider()
+        st.subheader("SHAP Feature Analysis (Model Nowcast)")
+
+        shap_df = compute_shap_contributions(
+            model_obj=model,
+            X_input=current_model_input,
+            class_index=current_pred_encoded,
+            feature_names=current_model_input.columns.tolist()
+        )
+
+        if shap_df is None or shap_df.empty:
+            st.info("SHAP analysis is not available for the current model artifact.")
+        else:
+            top_n = shap_df.head(10).iloc[::-1]
+            fig, ax = plt.subplots(figsize=(8, 5))
+            colors = ["#d62728" if v > 0 else "#1f77b4" for v in top_n["shap_value"]]
+            ax.barh(top_n["feature"], top_n["shap_value"], color=colors)
+            ax.axvline(0, color="black", linewidth=1)
+            ax.set_xlabel("SHAP value")
+            ax.set_ylabel("Feature")
+            if model_category:
+                ax.set_title(f"Top impacts toward model class: {model_category}")
+            else:
+                ax.set_title("Top SHAP feature impacts")
+            st.pyplot(fig, clear_figure=True)
+            st.caption("Positive values push prediction toward the shown class; negative values push away.")
+            st.dataframe(
+                shap_df[["feature", "shap_value"]].head(10),
+                use_container_width=True
+            )
+
+    # ===========================
     # 3-DAY FORECAST
     # ===========================
 
@@ -227,7 +346,7 @@ if 'current_data' in st.session_state:
                 "PM10": f"{pred['pm10']:.1f}",
                 "NO2": f"{pred['no2']:.2f}",
                 "O3": f"{pred['o3']:.1f}",
-                "AQI Status": pred['aqi_category']
+                "AQI Status": normalize_aqi_category(pred['aqi_category'])
             }
             for pred in predictions
         ])
@@ -281,7 +400,7 @@ if 'current_data' in st.session_state:
             X_input = pd.DataFrame([input_data])[features_order]
 
             pred_encoded = model.predict(X_input)[0]
-            pred_label = encoder.inverse_transform([pred_encoded])[0]
+            pred_label = normalize_aqi_category(encoder.inverse_transform([pred_encoded])[0])
 
             predictions.append({
                 "Time": dt.strftime("%Y-%m-%d %H:%M"),
