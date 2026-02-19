@@ -5,6 +5,7 @@ import pickle
 import os
 import sys
 import shap
+import xgboost as xgb
 import matplotlib.pyplot as plt
 from datetime import datetime
 
@@ -158,6 +159,46 @@ def _extract_shap_vector(raw_values, class_index, feature_count):
     return None
 
 
+def _extract_xgb_contrib_vector(raw_values, class_index, feature_count):
+    """Parse XGBoost pred_contribs output into a 1D per-feature vector."""
+    arr = np.array(raw_values)
+
+    # Regression / binary often returns (n_samples, n_features + 1)
+    if arr.ndim == 2 and arr.shape[0] >= 1 and arr.shape[1] >= feature_count:
+        return arr[0, :feature_count]
+
+    # Multiclass may return either:
+    # (n_samples, n_classes, n_features + 1) or (n_samples, n_features + 1, n_classes)
+    if arr.ndim == 3 and arr.shape[0] >= 1:
+        if arr.shape[2] == feature_count + 1:
+            class_idx = min(class_index, arr.shape[1] - 1)
+            return arr[0, class_idx, :feature_count]
+        if arr.shape[1] == feature_count + 1:
+            class_idx = min(class_index, arr.shape[2] - 1)
+            return arr[0, :feature_count, class_idx]
+
+    return None
+
+
+def _compute_xgb_contributions(model_obj, X_input, class_index, feature_names):
+    """Fallback SHAP-like contributions using XGBoost native pred_contribs."""
+    if not hasattr(model_obj, "get_booster"):
+        return None
+
+    try:
+        booster = model_obj.get_booster()
+    except Exception:
+        return None
+
+    try:
+        dmatrix = xgb.DMatrix(X_input[feature_names])
+        raw_values = booster.predict(dmatrix, pred_contribs=True, validate_features=False)
+    except Exception:
+        return None
+
+    return _extract_xgb_contrib_vector(raw_values, class_index, len(feature_names))
+
+
 def compute_shap_contributions(model_obj, X_input, class_index, feature_names):
     """Compute per-feature SHAP contributions for one prediction row."""
     try:
@@ -172,6 +213,9 @@ def compute_shap_contributions(model_obj, X_input, class_index, feature_names):
             return None
 
     shap_vector = _extract_shap_vector(raw_values, class_index, len(feature_names))
+    if shap_vector is None:
+        shap_vector = _compute_xgb_contributions(model_obj, X_input, class_index, feature_names)
+
     if shap_vector is None or len(shap_vector) != len(feature_names):
         return None
 
