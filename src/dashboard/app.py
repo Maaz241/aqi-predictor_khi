@@ -125,39 +125,6 @@ def get_openweather_aqi_label(aqi_index):
     return mapping.get(aqi_index, "Unknown")
 
 
-def _extract_shap_vector(raw_values, class_index, feature_count):
-    """Normalize SHAP output shape across model and explainer types."""
-    if isinstance(raw_values, list):
-        if not raw_values:
-            return None
-        class_idx = min(class_index, len(raw_values) - 1)
-        arr = np.array(raw_values[class_idx])
-        if arr.ndim == 2:
-            return arr[0]
-        if arr.ndim == 1:
-            return arr
-        return None
-
-    arr = np.array(raw_values)
-    if arr.ndim == 1:
-        return arr
-    if arr.ndim == 2:
-        return arr[0]
-    if arr.ndim == 3:
-        # Typical shape: (n_samples, n_features, n_classes)
-        if arr.shape[0] == 1 and arr.shape[1] == feature_count:
-            class_idx = min(class_index, arr.shape[2] - 1)
-            return arr[0, :, class_idx]
-        # Alternate shape: (n_samples, n_classes, n_features)
-        if arr.shape[0] == 1 and arr.shape[2] == feature_count:
-            class_idx = min(class_index, arr.shape[1] - 1)
-            return arr[0, class_idx, :]
-        # Alternate shape: (n_classes, n_samples, n_features)
-        if arr.shape[2] == feature_count:
-            class_idx = min(class_index, arr.shape[0] - 1)
-            return arr[class_idx, 0, :]
-    return None
-
 
 def _extract_xgb_contrib_vector(raw_values, class_index, feature_count):
     """Parse XGBoost pred_contribs output into a 1D per-feature vector."""
@@ -179,53 +146,6 @@ def _extract_xgb_contrib_vector(raw_values, class_index, feature_count):
 
     return None
 
-
-def _compute_xgb_contributions(model_obj, X_input, class_index, feature_names):
-    """Fallback SHAP-like contributions using XGBoost native pred_contribs."""
-    if not hasattr(model_obj, "get_booster"):
-        return None
-
-    try:
-        booster = model_obj.get_booster()
-    except Exception:
-        return None
-
-    try:
-        dmatrix = xgb.DMatrix(X_input[feature_names])
-        raw_values = booster.predict(dmatrix, pred_contribs=True, validate_features=False)
-    except Exception:
-        return None
-
-    return _extract_xgb_contrib_vector(raw_values, class_index, len(feature_names))
-
-
-def compute_shap_contributions(model_obj, X_input, class_index, feature_names):
-    """Compute per-feature SHAP contributions for one prediction row."""
-    try:
-        explainer = shap.Explainer(model_obj)
-        explanation = explainer(X_input)
-        raw_values = explanation.values
-    except Exception:
-        try:
-            explainer = shap.TreeExplainer(model_obj)
-            raw_values = explainer.shap_values(X_input)
-        except Exception:
-            return None
-
-    shap_vector = _extract_shap_vector(raw_values, class_index, len(feature_names))
-    if shap_vector is None:
-        shap_vector = _compute_xgb_contributions(model_obj, X_input, class_index, feature_names)
-
-    if shap_vector is None or len(shap_vector) != len(feature_names):
-        return None
-
-    contributions = pd.DataFrame({
-        "feature": feature_names,
-        "shap_value": shap_vector
-    })
-    contributions["abs_shap"] = contributions["shap_value"].abs()
-    contributions = contributions.sort_values("abs_shap", ascending=False).reset_index(drop=True)
-    return contributions
 
 
 # ===========================
@@ -326,40 +246,7 @@ if 'current_data' in st.session_state:
         st.write(f"💧 Humidity: {data['humidity']}%")
         st.write(f"🌬️ Wind: {data['wind_speed']} m/s ({data['wind_deg']}°)")
 
-    # ===========================
-    # SHAP ANALYSIS (CURRENT NOWCAST)
-    # ===========================
-    if model and encoder and current_model_input is not None and current_pred_encoded is not None:
-        st.divider()
-        st.subheader("SHAP Feature Analysis (Model Nowcast)")
 
-        shap_df = compute_shap_contributions(
-            model_obj=model,
-            X_input=current_model_input,
-            class_index=current_pred_encoded,
-            feature_names=current_model_input.columns.tolist()
-        )
-
-        if shap_df is None or shap_df.empty:
-            st.info("SHAP analysis is not available for the current model artifact.")
-        else:
-            top_n = shap_df.head(10).iloc[::-1]
-            fig, ax = plt.subplots(figsize=(8, 5))
-            colors = ["#d62728" if v > 0 else "#1f77b4" for v in top_n["shap_value"]]
-            ax.barh(top_n["feature"], top_n["shap_value"], color=colors)
-            ax.axvline(0, color="black", linewidth=1)
-            ax.set_xlabel("SHAP value")
-            ax.set_ylabel("Feature")
-            if model_category:
-                ax.set_title(f"Top impacts toward model class: {model_category}")
-            else:
-                ax.set_title("Top SHAP feature impacts")
-            st.pyplot(fig, clear_figure=True)
-            st.caption("Positive values push prediction toward the shown class; negative values push away.")
-            st.dataframe(
-                shap_df[["feature", "shap_value"]].head(10),
-                use_container_width=True
-            )
 
     # ===========================
     # 3-DAY FORECAST
