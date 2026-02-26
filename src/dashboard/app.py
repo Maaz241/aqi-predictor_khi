@@ -70,6 +70,7 @@ if metrics:
     display_cols = ['model', 'accuracy', 'f1_score']
     display_cols = [col for col in display_cols if col in metrics_df.columns]
     st.sidebar.dataframe(metrics_df[display_cols].set_index('model'), use_container_width=True)
+    st.sidebar.caption("Metrics source: metrics.json")
 
     best_primary_model = metrics_df.loc[metrics_df['f1_score'].idxmax()]
     horizon = int(best_primary_model.get('forecast_horizon_steps', 1))
@@ -172,9 +173,6 @@ if st.sidebar.button("Fetch Real-time Data"):
 
 if 'current_data' in st.session_state:
     data = st.session_state['current_data']
-    current_model_input = None
-    current_pred_encoded = None
-    model_category = None
     
     col1, col2, col3 = st.columns(3)
     
@@ -188,28 +186,6 @@ if 'current_data' in st.session_state:
 
         # Keep current status tied to OpenWeather index so number and label always match.
         category = openweather_category
-
-        # Show model nowcast separately for comparison.
-        if model and encoder:
-            current_input = {**data}
-            current_dt = datetime.fromtimestamp(data['timestamp'])
-            current_input['hour'] = current_dt.hour
-            current_input['day_of_week'] = current_dt.weekday()
-            current_input['month'] = current_dt.month
-            
-            features_order = [
-                'pm25', 'pm10', 'no2', 'o3', 'so2', 'co',
-                'temperature', 'humidity', 'pressure',
-                'wind_speed', 'wind_deg', 'clouds',
-                'hour', 'day_of_week', 'month'
-            ]
-            
-            X_current = pd.DataFrame([current_input])[features_order]
-            pred_encoded = model.predict(X_current)[0]
-            model_category = normalize_aqi_category(encoder.inverse_transform([pred_encoded])[0])
-            current_model_input = X_current
-            current_pred_encoded = int(pred_encoded)
-            st.caption(f"Model nowcast: {model_category}")
         
         st.markdown(
             f"### Status: <span style='color:{get_aqi_color(category)}'>{category}</span>",
