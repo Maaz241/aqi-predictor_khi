@@ -15,6 +15,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')
 from src.data_ingestion.openweather_client import OpenWeatherClient
 from src.feature_engineering.feature_processor import FeatureProcessor
 
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+
 # Page config
 st.set_page_config(page_title="Karachi AQI Predictor", layout="wide")
 
@@ -24,9 +26,9 @@ st.set_page_config(page_title="Karachi AQI Predictor", layout="wide")
 
 @st.cache_resource
 def load_model_assets():
-    model_path = "best_model.pkl"
-    encoder_path = "label_encoder.pkl"
-    pollutant_models_path = "pollutant_models.pkl"
+    model_path = os.path.join(PROJECT_ROOT, "best_model.pkl")
+    encoder_path = os.path.join(PROJECT_ROOT, "label_encoder.pkl")
+    pollutant_models_path = os.path.join(PROJECT_ROOT, "pollutant_models.pkl")
     
     model, encoder, pollutant_models = None, None, None
     
@@ -44,16 +46,18 @@ def load_model_assets():
 
 
 def load_metrics():
-    metrics_path = "metrics.json"
+    metrics_path = os.path.join(PROJECT_ROOT, "metrics.json")
     if os.path.exists(metrics_path):
         import json
         with open(metrics_path, "r") as f:
-            return json.load(f)
-    return None
+            metrics = json.load(f)
+        updated_at = datetime.fromtimestamp(os.path.getmtime(metrics_path)).strftime("%Y-%m-%d %H:%M:%S")
+        return metrics, metrics_path, updated_at
+    return None, metrics_path, None
 
 
 model, encoder, pollutant_models = load_model_assets()
-metrics = load_metrics()
+metrics, metrics_path_used, metrics_updated_at = load_metrics()
 
 # ===========================
 # SIDEBAR - MODEL METRICS
@@ -70,13 +74,15 @@ if metrics:
     display_cols = ['model', 'accuracy', 'f1_score']
     display_cols = [col for col in display_cols if col in metrics_df.columns]
     st.sidebar.dataframe(metrics_df[display_cols].set_index('model'), use_container_width=True)
-    st.sidebar.caption("Metrics source: metrics.json")
+    st.sidebar.caption(f"Metrics source: {metrics_path_used}")
+    if metrics_updated_at:
+        st.sidebar.caption(f"File updated: {metrics_updated_at}")
 
     best_primary_model = metrics_df.loc[metrics_df['f1_score'].idxmax()]
     horizon = int(best_primary_model.get('forecast_horizon_steps', 1))
     st.sidebar.success(
         f"Best Forecast Model (+{horizon} step): {best_primary_model['model']} "
-        f"(F1: {best_primary_model['f1_score']:.3f})"
+        f"(F1: {best_primary_model['f1_score']:.6f})"
     )
     
     st.sidebar.divider()
