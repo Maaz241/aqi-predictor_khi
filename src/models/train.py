@@ -56,6 +56,10 @@ else:
         dagshub.init(repo_owner=repo_owner, repo_name=repo_name, mlflow=True)
 
 
+def _flag_enabled(name, default="0"):
+    return str(os.getenv(name, default)).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def _prepare_training_dataframe(df):
     base_features = [
         'pm25', 'pm10', 'no2', 'o3', 'so2', 'co',
@@ -412,9 +416,21 @@ def train_models():
             with open("label_encoder.pkl", "wb") as f:
                 pickle.dump(label_encoder, f)
 
-    # Save all metrics locally
-    with open("metrics.json", "w") as f:
+    # Save latest metrics to a separate file by default so dashboard-pinned
+    # metrics.json does not change unless explicitly requested.
+    metrics_output_file = os.getenv("AQI_METRICS_OUTPUT_FILE", "metrics_latest.json")
+    with open(metrics_output_file, "w") as f:
         json.dump(all_metrics, f)
+    print(f"Saved training metrics to {metrics_output_file}")
+
+    if metrics_output_file == "metrics.json":
+        print("metrics.json was updated directly.")
+    elif _flag_enabled("AQI_UPDATE_DASHBOARD_METRICS", "0"):
+        with open("metrics.json", "w") as f:
+            json.dump(all_metrics, f)
+        print("AQI_UPDATE_DASHBOARD_METRICS=1, so metrics.json was updated.")
+    else:
+        print("Skipped updating metrics.json (set AQI_UPDATE_DASHBOARD_METRICS=1 to update it).")
 
     print(
         f"Training complete. Best model: {best_model_name} "
